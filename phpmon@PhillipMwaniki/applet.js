@@ -209,8 +209,7 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
             let running = svc.state === "active";
             let item = new PopupMenu.PopupMenuItem(svc.label);
             let color = DOT_COLOR[svc.state] || "#9a9ab0";
-            item.label.clutter_text.set_markup(`<span foreground="${color}">●</span>  ${GLib.markup_escape_text(svc.label, -1)}`);
-            let state = new St.Label({ text: STATE_TEXT[svc.state] || svc.state, style: "opacity: 0.6;" });
+            let state = new St.Label({ text: "● " + (STATE_TEXT[svc.state] || svc.state), style: `color: ${color};` });
             item.addActor(state, { align: St.Align.END });
             item.connect("activate", () => this._control(running ? "restart" : "start", svc));
             m.addMenuItem(item);
