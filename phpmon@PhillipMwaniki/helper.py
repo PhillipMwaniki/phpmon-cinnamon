@@ -5,6 +5,8 @@ Usage:
   helper.py status            print a JSON snapshot of PHP, services and sites
   helper.py restart <unit>    restart one service (start/stop work the same way)
   helper.py repair            restart Valet services that failed (e.g. at boot)
+  helper.py ext <ver> <name> on|off   enable/disable a PHP extension (asks for password)
+  helper.py xdebug-mode <ver> <mode>  set xdebug.mode for PHP-FPM and CLI (asks for password)
 
 Service control goes through `systemctl`; the bundled polkit rule lets your
 user manage just these dev services without a password prompt.
@@ -14,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 HOME = os.path.expanduser("~")
 VALET_DIR = os.path.join(HOME, ".config", "valet")
@@ -29,6 +32,19 @@ LABELS = {
 }
 LIMIT_KEYS = ["memory_limit", "upload_max_filesize", "post_max_size", "max_execution_time"]
 ALLOWED_VERBS = {"start", "stop", "restart"}
+
+VALET_PHPFPM_SRC = os.path.join(HOME, ".config", "composer", "vendor", "genesisweb",
+                                "valet-linux-plus", "cli", "Valet", "PhpFpm.php")
+CACHE_DIR = os.path.join(HOME, ".cache", "phpmon-cinnamon")
+APT_CACHE_SECONDS = 6 * 3600
+# Extensions worth offering to install when the PPA has them
+INSTALLABLE = ["xdebug", "pcov", "redis", "imagick", "pgsql", "sqlite3", "memcached", "mongodb",
+               "soap", "ldap", "bz2", "gmp", "apcu", "igbinary", "msgpack", "yaml", "swoole",
+               "amqp", "xhprof"]
+XDEBUG_MODES = ["off", "develop", "debug", "develop,debug", "coverage", "profile", "trace"]
+XDEBUG_CONF = "99-phpmon-xdebug.ini"
+VERSION_RE = re.compile(r"\d+\.\d+")
+EXT_RE = re.compile(r"[a-z0-9_]+")
 
 
 def run(cmd, timeout=10):
@@ -153,6 +169,69 @@ def sites(cfg):
     return out
 
 
+def supported_versions():
+    """PHP versions `valet use` accepts, read from the installed Valet."""
+    try:
+        with open(VALET_PHPFPM_SRC) as f:
+            m = re.search(r"SUPPORTED_PHP_VERSIONS\s*=\s*\[([^\]]*)\]", f.read())
+        if m:
+            return re.findall(r"'(\d+\.\d+)'", m.group(1))
+    except OSError:
+        pass
+    return ["8.2", "8.3", "8.4"]
+
+
+def enabled_in(version, sapi):
+    conf = f"/etc/php/{version}/{sapi}/conf.d"
+    if not os.path.isdir(conf):
+        return set()
+    return {re.sub(r"^\d+-", "", f)[:-4] for f in os.listdir(conf) if f.endswith(".ini")}
+
+
+def extensions(version):
+    mods = f"/etc/php/{version}/mods-available"
+    if not os.path.isdir(mods):
+        return []
+    fpm, cli = enabled_in(version, "fpm"), enabled_in(version, "cli")
+    names = sorted(f[:-4] for f in os.listdir(mods) if f.endswith(".ini"))
+    return [{"name": n, "fpm": n in fpm, "cli": n in cli} for n in names]
+
+
+def apt_available(version):
+    """Package names the configured repos offer for this PHP version (cached)."""
+    path = os.path.join(CACHE_DIR, f"apt-php{version}.json")
+    try:
+        if time.time() - os.path.getmtime(path) < APT_CACHE_SECONDS:
+            with open(path) as f:
+                return set(json.load(f))
+    except (OSError, ValueError):
+        pass
+    rc, out, _ = run(["apt-cache", "pkgnames", f"php{version}-"], timeout=20)
+    names = sorted(out.split()) if rc == 0 else []
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(names, f)
+    return set(names)
+
+
+def installed_packages(version):
+    rc, out, _ = run(["dpkg-query", "-W", "-f", "${Package} ${db:Status-Status}\n", f"php{version}-*"])
+    return {line.split()[0] for line in out.splitlines() if line.endswith(" installed")}
+
+
+def installable(version):
+    avail, have = apt_available(version), installed_packages(version)
+    return [e for e in INSTALLABLE if f"php{version}-{e}" in avail and f"php{version}-{e}" not in have]
+
+
+def xdebug_info(version):
+    if not os.path.exists(f"/etc/php/{version}/mods-available/xdebug.ini"):
+        return {"installed": False, "mode": None}
+    rc, out, _ = run([f"php-fpm{version}", "-i"])
+    m = re.search(r"^xdebug\.mode => (\S+)", out, re.M)
+    return {"installed": True, "mode": m.group(1) if m else None}
+
+
 def status():
     cfg = valet_config()
     cli_short, cli_full = php_version()
@@ -184,6 +263,10 @@ def status():
             "valet_logs": os.path.join(VALET_DIR, "Log"),
             "nginx_error_log": os.path.join(VALET_DIR, "Log", "nginx-error.log"),
         },
+        "supported_versions": supported_versions(),
+        "extensions": extensions(short) if short else [],
+        "installable": installable(short) if short else [],
+        "xdebug": xdebug_info(short) if short else {"installed": False, "mode": None},
         "tld": cfg["tld"],
         "sites": sites(cfg),
     }
@@ -212,6 +295,43 @@ def repair():
     print(json.dumps({"repaired": fixed}))
 
 
+def check_version(version):
+    if not VERSION_RE.fullmatch(version) or not os.path.isdir(f"/etc/php/{version}"):
+        raise SystemExit(f"PHP {version!r} isn't installed")
+
+
+def restart_fpm(version):
+    if unit_states([f"php{version}-fpm"]).get(f"php{version}-fpm") == "active":
+        control("restart", f"php{version}-fpm")
+
+
+def set_extension(version, name, on):
+    check_version(version)
+    if not EXT_RE.fullmatch(name) or not os.path.exists(f"/etc/php/{version}/mods-available/{name}.ini"):
+        raise SystemExit(f"extension {name!r} isn't available for PHP {version}")
+    tool = "/usr/sbin/phpenmod" if on else "/usr/sbin/phpdismod"
+    rc, _, err = run(["pkexec", tool, "-v", version, name], timeout=120)
+    if rc != 0:
+        raise SystemExit(err or "cancelled")
+    restart_fpm(version)
+
+
+def set_xdebug_mode(version, mode):
+    check_version(version)
+    if mode not in XDEBUG_MODES:
+        raise SystemExit(f"unsupported Xdebug mode {mode!r}")
+    targets = [f"/etc/php/{version}/{sapi}/conf.d/{XDEBUG_CONF}" for sapi in ("fpm", "cli")]
+    content = f"; Managed by phpmon-cinnamon\nxdebug.mode = {mode}\n"
+    try:
+        r = subprocess.run(["pkexec", "/usr/bin/tee", *targets], input=content, text=True,
+                           capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SystemExit(str(e))
+    if r.returncode != 0:
+        raise SystemExit(r.stderr.strip() or "cancelled")
+    restart_fpm(version)
+
+
 def main(argv):
     if len(argv) >= 2 and argv[1] == "status":
         print(json.dumps(status()))
@@ -219,6 +339,10 @@ def main(argv):
         control(argv[1], argv[2])
     elif len(argv) == 2 and argv[1] == "repair":
         repair()
+    elif len(argv) == 5 and argv[1] == "ext" and argv[4] in ("on", "off"):
+        set_extension(argv[2], argv[3], argv[4] == "on")
+    elif len(argv) == 4 and argv[1] == "xdebug-mode":
+        set_xdebug_mode(argv[2], argv[3])
     else:
         print(__doc__, file=sys.stderr)
         return 2
