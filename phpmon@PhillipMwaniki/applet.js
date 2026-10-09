@@ -25,6 +25,8 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
         this.busy = false;
         this.timerId = 0;
         this.repairedOnce = false;
+        this.statusJson = "";
+        this.menuStale = false;
 
         this.settings = new Settings.AppletSettings(this, metadata.uuid, instanceId);
         this.settings.bind("refresh-interval", "refreshInterval", () => this._schedule());
@@ -34,8 +36,10 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
         this.menuManager = new PopupMenu.PopupMenuManager(this);
         this.menu = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
+        // Rebuilding an open menu closes it, so changes wait until it closes
         this.menu.connect("open-state-changed", (m, open) => {
             if (open) this._refresh();
+            else if (this.menuStale) this._buildMenu();
         });
 
         this.set_applet_icon_name(ICON);
@@ -77,14 +81,17 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
                 global.logError("phpmon: status failed: " + err);
                 return;
             }
+            if (out === this.statusJson) return;
             try {
                 this.status = JSON.parse(out);
             } catch (e) {
                 global.logError("phpmon: bad status JSON: " + e.message);
                 return;
             }
+            this.statusJson = out;
             this._updatePanel();
-            this._buildMenu();
+            if (this.menu.isOpen) this.menuStale = true;
+            else this._buildMenu();
             this._maybeAutoRepair();
         });
     }
@@ -93,7 +100,7 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
         if (this.timerId) Mainloop.source_remove(this.timerId);
         let secs = Math.max(5, this.refreshInterval || 15);
         this.timerId = Mainloop.timeout_add_seconds(secs, () => {
-            if (!this.menu.isOpen) this._refresh();
+            this._refresh();
             return true;
         });
     }
@@ -251,6 +258,7 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
     }
 
     _buildMenu() {
+        this.menuStale = false;
         let m = this.menu;
         m.removeAll();
         let s = this.status;
