@@ -45,8 +45,9 @@ def valet_config():
         with open(VALET_CONFIG) as f:
             cfg = json.load(f)
     except (OSError, ValueError):
-        return {"tld": "test", "paths": []}
-    return {"tld": cfg.get("domain") or cfg.get("tld") or "test", "paths": cfg.get("paths", [])}
+        return {"tld": "test", "paths": [], "php_version": None}
+    return {"tld": cfg.get("domain") or cfg.get("tld") or "test", "paths": cfg.get("paths", []),
+            "php_version": cfg.get("php_version")}
 
 
 def php_version():
@@ -55,6 +56,12 @@ def php_version():
         return None, None
     short, full = out.split("|", 1)
     return short, full
+
+
+def fpm_full_version(version):
+    rc, out, _ = run([f"php-fpm{version}", "-v"])
+    m = re.match(r"PHP (\S+)", out)
+    return m.group(1) if rc == 0 and m else None
 
 
 def installed_php_versions():
@@ -148,7 +155,10 @@ def sites(cfg):
 
 def status():
     cfg = valet_config()
-    short, full = php_version()
+    cli_short, cli_full = php_version()
+    # Sites use the PHP-FPM version Valet is set to; the `php` command can differ
+    short = cfg["php_version"] or cli_short
+    full = fpm_full_version(short) if short else None
     valet_units = [u.format(v=short) for u in VALET_UNITS] if short else ["nginx", "dnsmasq"]
     valet_units = existing_units(valet_units)
     extra_units = existing_units(EXTRA_UNITS)
@@ -161,7 +171,8 @@ def status():
 
     services = [svc(n, True) for n in valet_units] + [svc(n, False) for n in extra_units]
     return {
-        "php": {"version": short, "full": full, "installed": installed_php_versions()},
+        "php": {"version": short, "full": full or cli_full, "cli_version": cli_short,
+                "cli_full": cli_full, "installed": installed_php_versions()},
         "services": services,
         "valet_ok": all(s["state"] == "active" for s in services if s["valet"]),
         "limits": limits,
