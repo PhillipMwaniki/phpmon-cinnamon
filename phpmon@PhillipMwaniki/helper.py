@@ -125,7 +125,7 @@ def sites(cfg):
     # Valet proxies (`valet proxy`) only exist as nginx configs, with no folder
     nginx_dir = os.path.join(VALET_DIR, "Nginx")
     if os.path.isdir(nginx_dir):
-        for host in os.listdir(nginx_dir):
+        for host in (h for h in os.listdir(nginx_dir) if not h.startswith(".")):
             name = host[:-len(tld) - 1] if host.endswith("." + tld) else host
             if name not in found:
                 found[name] = {"path": None, "linked": False, "proxy": True}
