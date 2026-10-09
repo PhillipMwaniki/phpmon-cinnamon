@@ -6,6 +6,8 @@ active PHP version on the panel and puts your local dev services and sites one
 click away. Inspired by [PHP Monitor](https://github.com/nicoverbruggen/phpmon)
 for macOS; this is an independent project, not affiliated with it.
 
+<p align="center"><img src="docs/screenshot.png" alt="PHP Monitor menu showing PHP 8.4, running services, sites, PHP-FPM limits and PHP settings" width="400"></p>
+
 ## Features
 
 - **PHP version on the panel.** The label turns red if a Valet service
