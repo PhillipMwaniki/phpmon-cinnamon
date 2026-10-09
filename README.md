@@ -21,11 +21,28 @@ for macOS; this is an independent project, not affiliated with it.
   parked site is in "Open site in browser" and "Open project in editor".
 - **PHP limits** as PHP-FPM sees them (what your sites get): memory, upload,
   POST size and max execution time.
+- **Switch PHP version.** Pick any version Valet supports (8.2, 8.3, 8.4 with
+  valet-linux-plus 2). It runs `valet use <version> --update-cli` in a terminal,
+  which also installs the version if it's missing. If the command line and your
+  sites end up on different versions, the menu says so.
+- **Extensions.** A switch per extension shows whether it's enabled for
+  PHP-FPM. Toggling runs `phpenmod`/`phpdismod` (you'll be asked for your
+  password) and restarts PHP-FPM.
+- **Install extension.** Common extensions available from your PHP repository
+  but not installed (Xdebug, PCOV, Redis, Imagick, PostgreSQL and more), each
+  installed with `apt` in a terminal.
+- **Xdebug mode.** Once Xdebug is installed, choose off, develop, debug,
+  coverage, profile or trace. The mode is written to
+  `/etc/php/<version>/{fpm,cli}/conf.d/99-phpmon-xdebug.ini`.
 - **Config & logs.** php.ini for PHP-FPM and CLI, the Nginx error log, and
   Valet's logs, Nginx config and settings folders.
 
 The applet never reads or shows the database credentials stored in Valet's
 `config.json`.
+
+Service restarts are passwordless once the polkit rule is installed. Changing
+PHP configuration (extensions, Xdebug mode) and installing packages always ask
+for your password.
 
 ## Prerequisites
 
@@ -36,6 +53,7 @@ The applet never reads or shows the database credentials stored in Valet's
 | PHP with PHP-FPM, e.g. from the ondrej PPA | PHP version and limits | `php -v` and `php-fpm8.4 -v` (use your version) |
 | systemd and polkit | Service status and passwordless control | `systemctl --version` and `pkaction --version` |
 | Python 3 | Runs the helper script | `python3 --version` |
+| A terminal set as `x-terminal-emulator` | Shows version switches and installs | `x-terminal-emulator --version` |
 
 Valet Linux installs PHP-FPM, Nginx and DNSMasq for you. If you're setting up
 from scratch on Ubuntu or Linux Mint:
@@ -96,11 +114,13 @@ Right-click the applet and choose **Configure**:
     and sites;
   - `helper.py restart|start|stop <service>` controls one service, and refuses
     anything outside the list above;
-  - `helper.py repair` restarts failed Valet services, PHP-FPM first.
+  - `helper.py repair` restarts failed Valet services, PHP-FPM first;
+  - `helper.py ext <version> <name> on|off` and
+    `helper.py xdebug-mode <version> <mode>` change PHP configuration through
+    `pkexec`, then restart PHP-FPM.
 - `polkit/install.sh` installs the passwordless rule.
 
 ## Roadmap
 
-- Switch the PHP version used by Valet (`valet use`)
-- Install additional PHP versions from the ondrej PPA
-- Toggle PHP extensions and Xdebug
+- Per-site PHP versions (`valet isolate`)
+- Secure and unsecure sites from the menu
