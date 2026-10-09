@@ -183,6 +183,73 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
         }
     }
 
+    // Commands that need your password run in a terminal so you can see them
+    _inTerminal(cmd) {
+        let script = `${cmd}; echo; printf 'Finished. Press Enter to close… '; read _`;
+        try {
+            let proc = Gio.Subprocess.new(["x-terminal-emulator", "-e", "sh", "-c", script],
+                                          Gio.SubprocessFlags.NONE);
+            proc.wait_async(null, () => this._refresh());
+        } catch (e) {
+            Main.notify("PHP Monitor", "Couldn't open a terminal: " + e.message);
+        }
+    }
+
+    _helperAction(args, failText) {
+        this._runHelper(args, (ok, out, err) => {
+            if (!ok) Main.notify("PHP Monitor", `${failText}: ${err || "unknown error"}`);
+            this._refresh();
+        });
+    }
+
+    _buildPhpSection(m, s) {
+        let v = s.php.version;
+        if (!v) return;
+        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        m.addMenuItem(this._heading(`PHP ${v} settings`));
+
+        // Switch version: `valet use` also installs a version that's missing
+        let sw = new PopupMenu.PopupSubMenuMenuItem("Switch PHP version");
+        for (let ver of [...s.supported_versions].reverse()) {
+            let current = ver === v;
+            let note = current ? "  (current)" : (s.php.installed.includes(ver) ? "" : "  (will be installed)");
+            let item = new PopupMenu.PopupMenuItem(`PHP ${ver}${note}`);
+            if (current) item.setOrnament(PopupMenu.OrnamentType.CHECK, true);
+            else item.connect("activate", () => this._inTerminal(`valet use ${ver} --update-cli`));
+            sw.menu.addMenuItem(item);
+        }
+        m.addMenuItem(sw);
+
+        // Extensions enabled for PHP-FPM; toggling asks for your password
+        let ext = new PopupMenu.PopupSubMenuMenuItem(`Extensions (${s.extensions.filter(e => e.fpm).length} enabled)`);
+        for (let e of s.extensions) {
+            let item = new PopupMenu.PopupSwitchMenuItem(e.name, e.fpm);
+            item.connect("toggled", (it, on) =>
+                this._helperAction(["ext", v, e.name, on ? "on" : "off"], `Couldn't ${on ? "enable" : "disable"} ${e.name}`));
+            ext.menu.addMenuItem(item);
+        }
+        m.addMenuItem(ext);
+
+        if (s.installable.length) {
+            let inst = new PopupMenu.PopupSubMenuMenuItem("Install extension");
+            for (let name of s.installable)
+                this._action(inst.menu, name, null, () =>
+                    this._inTerminal(`sudo apt install -y php${v}-${name} && sudo systemctl restart php${v}-fpm`));
+            m.addMenuItem(inst);
+        }
+
+        if (s.xdebug.installed) {
+            let xd = new PopupMenu.PopupSubMenuMenuItem(`Xdebug mode: ${s.xdebug.mode || "unknown"}`);
+            for (let mode of ["off", "develop", "debug", "develop,debug", "coverage", "profile", "trace"]) {
+                let item = new PopupMenu.PopupMenuItem(mode);
+                if (mode === s.xdebug.mode) item.setOrnament(PopupMenu.OrnamentType.DOT, true);
+                item.connect("activate", () => this._helperAction(["xdebug-mode", v, mode], "Couldn't change Xdebug mode"));
+                xd.menu.addMenuItem(item);
+            }
+            m.addMenuItem(xd);
+        }
+    }
+
     _buildMenu() {
         let m = this.menu;
         m.removeAll();
@@ -194,6 +261,8 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
 
         // PHP + overall health
         m.addMenuItem(this._heading(`PHP ${s.php.full || "not found"}`));
+        if (s.php.cli_version && s.php.cli_version !== s.php.version)
+            m.addMenuItem(this._info(`Command line uses PHP ${s.php.cli_full || s.php.cli_version}`));
         if (s.valet_ok) {
             m.addMenuItem(this._info("✓ All Valet services are running"));
         } else {
@@ -246,6 +315,8 @@ class PhpMonitorApplet extends Applet.TextIconApplet {
         } else {
             m.addMenuItem(this._info("Unavailable"));
         }
+
+        this._buildPhpSection(m, s);
 
         // Config files and logs
         let cfg = new PopupMenu.PopupSubMenuMenuItem("Config & logs");
