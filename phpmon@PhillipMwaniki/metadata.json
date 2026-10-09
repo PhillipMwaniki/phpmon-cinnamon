@@ -1,0 +1,8 @@
+{
+    "uuid": "phpmon@PhillipMwaniki",
+    "name": "PHP Monitor",
+    "description": "Active PHP version, Valet service status and restarts, auto-repair after login, sites, limits and config shortcuts. Inspired by PHP Monitor for macOS.",
+    "version": "0.1.0",
+    "max-instances": 1,
+    "author": "PhillipMwaniki"
+}

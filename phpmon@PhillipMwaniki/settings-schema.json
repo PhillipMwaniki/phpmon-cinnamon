@@ -1,0 +1,23 @@
+{
+    "auto-repair": {
+        "type": "switch",
+        "default": true,
+        "description": "Restart Valet services that failed at boot when you log in",
+        "tooltip": "With an encrypted home folder, PHP-FPM and Nginx start before your files are available and fail. This restarts them once after login."
+    },
+    "refresh-interval": {
+        "type": "spinbutton",
+        "default": 15,
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "units": "seconds",
+        "description": "Check service status every"
+    },
+    "editor-command": {
+        "type": "entry",
+        "default": "code",
+        "description": "Editor command for opening projects",
+        "tooltip": "For example: code, subl, phpstorm"
+    }
+}
